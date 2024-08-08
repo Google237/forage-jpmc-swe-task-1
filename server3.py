@@ -19,7 +19,6 @@
 #  DEALINGS IN THE SOFTWARE.
 
 import csv
-# from BaseHTTPServer import BaseHTTPRequestHandler,HTTPServer
 import http.server
 import json
 import operator
@@ -27,15 +26,11 @@ import os.path
 import re
 import threading
 from datetime import timedelta, datetime
-# from itertools import izip
 from random import normalvariate, random
 from socketserver import ThreadingMixIn
 
 import dateutil.parser
 
-################################################################################
-#
-# Config
 
 # Sim params
 
@@ -44,7 +39,7 @@ SIM_LENGTH = timedelta(days=365 * 5)
 MARKET_OPEN = datetime.today().replace(hour=0, minute=30, second=0)
 
 # Market parms
-#       min  / max  / std
+
 SPD = (2.0, 6.0, 0.1)
 PX = (60.0, 150.0, 1)
 FREQ = (12, 36, 50)
@@ -54,16 +49,12 @@ FREQ = (12, 36, 50)
 OVERLAP = 4
 
 
-################################################################################
-#
-# Test Data
-
-def bwalk(min, max, std):
+def bwalk(min_val, max_val, std):
     """ Generates a bounded random walk. """
-    rng = max - min
+    rng = max_val - min_val
     while True:
-        max += normalvariate(0, std)
-        yield abs((max % (rng * 2)) - rng) + min
+        max_val += normalvariate(0, std)
+        yield abs((max_val % (rng * 2)) - rng) + min_val
 
 
 def market(t0=MARKET_OPEN):
@@ -86,10 +77,6 @@ def orders(hist):
         size = int(abs(normalvariate(0, 100)))
         yield t, stock, side, order, size
 
-
-################################################################################
-#
-# Order Book
 
 def add_book(book, order, size, _age=10):
     """ Add a new order and size to a book, and age the rest of the book. """
@@ -115,24 +102,31 @@ def clear_order(order, size, book, op=operator.ge, _notional=0):
 
 
 def clear_book(buy=None, sell=None):
-    """ Clears all crossed orders from a buy and sell book, returning the new
-        books uncrossed.
+    """ Clears all crossed orders from a buy and sell book,
+        returning the new books uncrossed.
     """
     while buy and sell:
-        order, size, _ = buy[0]
-        new_book = clear_order(order, size, sell)
-        if new_book:
-            sell = new_book[1]
-            buy = buy[1:]
+        order_bids = buy[0]
+        order_asks = sell[0]
+        
+        order_bids_price, order_bids_size, _ = order_bids
+        order_asks_price, order_asks_size, _ = order_asks
+        
+        if order_bids_price >= order_asks_price:
+            new_book = clear_order(order_bids_price, order_bids_size, sell)
+            if new_book:
+                sell = new_book[1]
+                buy = buy[1:]
+            else:
+                break
         else:
             break
     return buy, sell
 
 
 def order_book(orders, book, stock_name):
-    """ Generates a series of order books from a series of orders.  Order books
-        are mutable lists, and mutating them during generation will affect the
-        next turn!
+    """ Generates a series of order books from a series of orders.
+        Order books are mutable lists, and mutating them during generation will affect the next turn!
     """
     for t, stock, side, order, size in orders:
         if stock_name == stock:
@@ -142,13 +136,9 @@ def order_book(orders, book, stock_name):
         yield t, bids, asks
 
 
-################################################################################
-#
-# Test Data Persistence
-
 def generate_csv():
     """ Generate a CSV of order history. """
-    with open('test.csv', 'wb') as f:
+    with open('test.csv', 'w', newline='') as f:
         writer = csv.writer(f)
         for t, stock, side, order, size in orders(market()):
             if t > MARKET_OPEN + SIM_LENGTH:
@@ -158,19 +148,16 @@ def generate_csv():
 
 def read_csv():
     """ Read a CSV or order history into a list. """
-    with open('test.csv', 'rt') as f:
-        for time, stock, side, order, size in csv.reader(f):
-            yield dateutil.parser.parse(time), stock, side, float(order), int(size)
+    with open('test.csv', 'r') as f:
+        for time, stock, side, order_str, size_str in csv.reader(f):
+            time_parsed = dateutil.parser.parse(time)
+            order = float(order_str)
+            size = int(size_str)
+            yield time_parsed, stock, side.lower(), order, size
 
-
-################################################################################
-#
-# Server
 
 class ThreadedHTTPServer(ThreadingMixIn, http.server.HTTPServer):
-    """ Boilerplate class for a multithreaded HTTP Server, with working
-        shutdown.
-    """
+    """ Boilerplate class for a multithreaded HTTP Server, with working shutdown. """
     allow_reuse_address = True
 
     def shutdown(self):
@@ -180,8 +167,8 @@ class ThreadedHTTPServer(ThreadingMixIn, http.server.HTTPServer):
 
 
 def route(path):
-    """ Decorator for a simple bottle-like web framework.  Routes path to the
-        decorated method, with the rest of the path as an argument.
+    """ Decorator for a simple bottle-like web framework.
+        Routes path to the decorated method, with the rest of the path as an argument.
     """
 
     def _route(f):
@@ -217,9 +204,7 @@ def get(req_handler, routes):
 
 
 def run(routes, host='0.0.0.0', port=8080):
-    """ Runs a class as a server whose methods have been decorated with
-        @route.
-    """
+    """ Runs a class as a server whose methods have been decorated with @route. """
 
     class RequestHandler(http.server.BaseHTTPRequestHandler):
         def log_message(self, *args, **kwargs):
@@ -240,10 +225,6 @@ def run(routes, host='0.0.0.0', port=8080):
     server.start()
     server.waitForThread()
 
-
-################################################################################
-#
-# App
 
 ops = {
     'buy': operator.le,
@@ -282,14 +263,14 @@ class App(object):
                 yield t, bids, asks
 
     def read_10_first_lines(self):
-        for _ in iter(range(10)):
+        for _ in range(10):
             next(self._data_1)
             next(self._data_2)
 
     @route('/query')
     def handle_query(self, x):
-        """ Takes no arguments, and yields the current top of the book;  the
-            best bid and ask and their sizes
+        """ Takes no arguments, and yields the current top of the book;
+            the best bid and ask and their sizes
         """
         try:
             t1, bids1, asks1 = next(self._current_book_1)
@@ -299,39 +280,25 @@ class App(object):
             self.__init__()
             t1, bids1, asks1 = next(self._current_book_1)
             t2, bids2, asks2 = next(self._current_book_2)
-        t = t1 if t1 > t2 else t2
+        t = max(t1, t2)
         print('Query received @ t%s' % t)
-        return [{
-            'id': x and x.get('id', None),
-            'stock': 'ABC',
-            'timestamp': str(t),
-            'top_bid': bids1 and {
-                'price': bids1[0][0],
-                'size': bids1[0][1]
-            },
-            'top_ask': asks1 and {
-                'price': asks1[0][0],
-                'size': asks1[0][1]
-            }
-        },
+        return [
             {
-                'id': x and x.get('id', None),
+                'id': x.get('id', None) if x else None,
+                'stock': 'ABC',
+                'timestamp': str(t),
+                'top_bid': {'price': bids1[0][0], 'size': bids1[0][1]} if bids1 else None,
+                'top_ask': {'price': asks1[0][0], 'size': asks1[0][1]} if asks1 else None
+            },
+            {
+                'id': x.get('id', None) if x else None,
                 'stock': 'DEF',
                 'timestamp': str(t),
-                'top_bid': bids2 and {
-                    'price': bids2[0][0],
-                    'size': bids2[0][1]
-                },
-                'top_ask': asks2 and {
-                    'price': asks2[0][0],
-                    'size': asks2[0][1]
-                }
-            }]
+                'top_bid': {'price': bids2[0][0], 'size': bids2[0][1]} if bids2 else None,
+                'top_ask': {'price': asks2[0][0], 'size': asks2[0][1]} if asks2 else None
+            }
+        ]
 
-
-################################################################################
-#
-# Main
 
 if __name__ == '__main__':
     if not os.path.isfile('test.csv'):
